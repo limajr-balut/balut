@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BALUT Online Multiplayer</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        balut: {
+                            50: '#f0fdf4',
+                            100: '#dcfce7',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            700: '#15803d',
+                            800: '#166534',
+                            900: '#14532d',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Firebase SDKs (Modular v10) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getDatabase, ref, set, get, update, onValue, child, onDisconnect, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        // ==========================================
+        // CONFIGURAÇÃO DO FIREBASE
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyAxh0x32Ce_ETnNpG6s7lPZdTYVV-b3Csg",
+            authDomain: "balut-online.firebaseapp.com",
+            databaseURL: "https://balut-online-default-rtdb.firebaseio.com",
+            projectId: "balut-online",
+            storageBucket: "balut-online.firebasestorage.app",
+            messagingSenderId: "1024582176067",
+            appId: "1:1024582176067:web:2b78b6ff18633134bf33f6"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        let authAttempt=null;
+        window.FB = { db, ref, set, get, update, onValue, child, onDisconnect, runTransaction, serverTimestamp,
+            identity() {
+                return authAttempt ||= (async()=>{
+                    try {
+                        const auth=getAuth(app);
+                        await new Promise((resolve,reject)=>{const off=onAuthStateChanged(auth,()=>{off();resolve();},reject);});
+                        const user=auth.currentUser || (await signInAnonymously(auth)).user;
+                        window.FB.authWarning='Identidade anônima conectada.';return {id:user.uid};
+                    } catch(error) {
+                        authAttempt=null;
+                        if(['auth/operation-not-allowed','auth/configuration-not-found','auth/admin-restricted-operation','auth/operation-not-supported-in-this-environment','auth/web-storage-unsupported'].includes(error.code)){
+                            const warning='Identidade do dispositivo ativa. O provedor Anônimo ainda precisa ser habilitado no Firebase.';
+                            window.FB.authWarning=warning;return {id:null,warning};
+                        }
+                        throw Error('Não foi possível confirmar a identidade: '+error.message);
+                    }
+                })();
+            }
+        };
+    </script>
+
+    <style>
+        @keyframes roll {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.15); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+        .rolling {
+            animation: roll 0.8s ease-in-out;
+        }
+
+        :root {
+            color-scheme: dark;
+            --bg: #0b1220;
+            --panel: #152232;
+            --panel2: #101c2b;
+            --line: #304052;
+            --text: #e5edf5;
+            --muted: #9cabbc;
+            --accent: #34d399;
+        }
+        html[data-theme=light] {
+            color-scheme: light;
+            --bg: #e9eff4;
+            --panel: #fff;
+            --panel2: #f3f7fa;
+            --line: #c1cfda;
+            --text: #172d40;
+            --muted: #526b7c;
+        }
+        body {
+            margin: 0;
+            background: radial-gradient(ellipse at 50% 0, var(--panel), var(--bg) 70%);
+            color: var(--text);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        .hidden, [hidden] { display: none !important; }
+        
+        /* Grid da Cartela Compacta 3x5 */
+        .score-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+        @media (max-width: 640px) {
+            .score-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        .score-cell {
+            background: var(--panel2);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 72px;
+            transition: all 0.2s ease;
+        }
+        .score-cell:hover {
+            border-color: var(--accent);
+        }
+        .score-cell.active-pick {
+            border-color: #22c55e;
+            background: rgba(34, 197, 94, 0.15);
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+            cursor: pointer;
+        }
+
+        /* Nav Tabs Mobile */
+        .mobile-nav-btn {
+            flex: 1;
+            padding: 10px 4px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 700;
+            border-bottom: 3px solid transparent;
+            color: var(--muted);
+            transition: all 0.2s ease;
+        }
+        .mobile-nav-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+            background: rgba(52, 211, 153, 0.08);
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col transition-colors duration-300">
+
+    <!-- Navbar / Header -->
+    <header class="bg-slate-800 border-b border-slate-700 py-3 px-4 sm:px-6 flex justify-between items-center shadow-md sticky top-0 z-40">
+        <div class="flex items-center space-x-3">
+            <div class="bg-balut-600 text-white p-2 rounded-xl shadow-lg flex items-center justify-center">
+                <i class="fa-solid fa-dice text-xl sm:text-2xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl sm:text-2xl font-black tracking-wider text-balut-500">BALUT ONLINE</h1>
+                <p id="roomHeaderInfo" class="text-xs text-slate-400 font-medium">Modo Multijogador Remoto</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-2 sm:space-x-4">
+            <button id="themeToggle" onclick="toggleTheme()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center space-x-2">
+                <i class="fa-solid fa-moon" id="themeIcon"></i>
+                <span class="hidden sm:inline">Tema</span>
+            </button>
+            <button onclick="leaveRoom()" class="bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold transition flex items-center space-x-2">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                <span class="hidden sm:inline">Sair</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Barra de Notificação/Status Conexão -->
+    <div id="connectionNotice" class="bg-amber-500/10 border-b border-amber-500/20 text-amber-400 text-xs py-1.5 px-4 text-center font-medium hidden"></div>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 flex flex-col">
+
+        <!-- LOBBY / SETUP SCREEN -->
+        <div id="setupScreen" class="max-w-xl mx-auto bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 shadow-2xl my-auto w-full">
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-white mb-2">Salas Balut Online</h2>
+                <p class="text-sm text-slate-400">Crie uma nova sala ou entre com o código de um amigo</p>
+            </div>
+
+            <div class="space-y-4 mb-6">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Seu Apelido</label>
+                    <input type="text" id="playerNameInput" placeholder="Ex: Jogador 1" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white font-medium focus:outline-none focus:border-balut-500">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Modo de Jogo</label>
+                    <select id="modeInput" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white font-medium focus:outline-none focus:border-balut-500">
+                        <option value="classic">Clássico (15 Categoria 3x5)</option>
+                        <option value="quick">Rápido (7 Categorias)</option>
+                        <option value="teams">Duplas (15 Categorias)</option>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <button onclick="createRoom()" class="bg-balut-600 hover:bg-balut-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-balut-600/30 transition flex items-center justify-center space-x-2">
+                        <i class="fa-solid fa-plus-circle"></i>
+                        <span>Criar Sala Online</span>
+                    </button>
+                    <div class="flex space-x-2">
+                        <input type="text" id="roomCodeInput" placeholder="CÓDIGO" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-3 text-white uppercase text-center font-bold tracking-widest focus:outline-none focus:border-balut-500">
+                        <button onclick="joinRoom()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-3 rounded-xl font-bold transition">Entrar</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="waitingRoomArea" class="hidden border-t border-slate-700 pt-6">
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-sm font-bold text-slate-300">Código da Sala: <span id="displayRoomCode" class="text-balut-500 tracking-wider text-base">----</span></span>
+                    <span class="text-xs bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2.5 py-1 rounded-full font-semibold">Aguardando...</span>
+                </div>
+                <div id="lobbyPlayersList" class="space-y-2 mb-4">
+                    <!-- Lista de jogadores -->
+                </div>
+                <div class="flex gap-2 mb-4">
+                    <button id="readyBtn" onclick="toggleReady()" class="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl transition">Estou Pronto</button>
+                    <button onclick="copyInvite()" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-3 rounded-xl"><i class="fa-solid fa-copy"></i></button>
+                </div>
+                <button id="startOnlineGameBtn" onclick="startOnlineGame()" class="hidden w-full bg-balut-600 hover:bg-balut-500 text-white font-bold py-3.5 rounded-xl shadow-lg transition">
+                    Iniciar Partida
+                </button>
+            </div>
+
+            <div class="border-t border-slate-700/50 pt-4 mt-6 text-center">
+                <button onclick="startLocalGame()" class="text-xs text-balut-400 hover:underline font-semibold">
+                    <i class="fa-solid fa-user-group mr-1"></i> Jogar Localmente (Mesmo Dispositivo)
+                </button>
+            </div>
+        </div>
+
+        <!-- GAMEPLAY SCREEN -->
+        <div id="gameScreen" class="hidden flex-1 flex flex-col lg:grid lg:grid-cols-12 gap-4">
+            
+            <!-- Mobile Navigation Bar (Abas visíveis no mobile/tablet) -->
+            <div class="lg:hidden flex bg-slate-800 border border-slate-700 rounded-xl overflow-hidden mb-2 shadow-md">
+                <button id="tabBtnDice" onclick="switchMobileTab('dice')" class="mobile-nav-btn active">
+                    <i class="fa-solid fa-dice mr-1.5"></i>Dados
+                </button>
+                <button id="tabBtnScore" onclick="switchMobileTab('score')" class="mobile-nav-btn">
+                    <i class="fa-solid fa-table-cells mr-1.5"></i>Cartela (3x5)
+                </button>
+                <button id="tabBtnRank" onclick="switchMobileTab('rank')" class="mobile-nav-btn">
+                    <i class="fa-solid fa-trophy mr-1.5"></i>Classificação
+                </button>
+            </div>
+
+            <!-- COLUNA ESQUERDA: Lance de Dados e Turno (Mobile Tab: 'dice') -->
+            <div id="tabContentDice" class="lg:col-span-5 space-y-4 flex-col flex">
+                
+                <!-- Info da Rodada & Turno -->
+                <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-lg flex justify-between items-center">
+                    <div>
+                        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Rodada</div>
+                        <div id="currentRoundDisplay" class="text-xl sm:text-2xl font-black text-balut-500">1 / 15</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Vez de:</div>
+                        <div id="currentPlayerDisplay" class="text-base sm:text-lg font-bold text-white bg-slate-700/50 px-3 py-1 rounded-lg border border-slate-600 inline-block mt-0.5">
+                            ---
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lançador de Dados -->
+                <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 shadow-xl flex flex-col items-center flex-1 justify-center">
+                    <div class="flex justify-between w-full items-center mb-4">
+                        <span class="text-xs font-semibold text-slate-300">Rolagens: <span id="rollsLeftCount" class="text-balut-500 font-bold text-base">3</span>/3</span>
+                        <span id="turnStatusMsg" class="text-[11px] bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full font-semibold">Rolar Dados</span>
+                    </div>
+
+                    <!-- 5 Dados -->
+                    <div class="grid grid-cols-5 gap-2 sm:gap-3 mb-6 w-full max-w-sm">
+                        <div onclick="toggleHold(0)" id="dice-0" class="dice aspect-square bg-slate-700 hover:bg-slate-600 border-2 border-slate-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition select-none relative shadow-md">
+                            <div class="dice-face w-full h-full flex items-center justify-center text-white"></div>
+                            <span class="hold-badge text-[9px] font-black text-amber-400 uppercase tracking-widest hidden absolute bottom-1 bg-slate-900/80 px-1 rounded">HOLD</span>
+                        </div>
+                        <div onclick="toggleHold(1)" id="dice-1" class="dice aspect-square bg-slate-700 hover:bg-slate-600 border-2 border-slate-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition select-none relative shadow-md">
+                            <div class="dice-face w-full h-full flex items-center justify-center text-white"></div>
+                            <span class="hold-badge text-[9px] font-black text-amber-400 uppercase tracking-widest hidden absolute bottom-1 bg-slate-900/80 px-1 rounded">HOLD</span>
+                        </div>
+                        <div onclick="toggleHold(2)" id="dice-2" class="dice aspect-square bg-slate-700 hover:bg-slate-600 border-2 border-slate-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition select-none relative shadow-md">
+                            <div class="dice-face w-full h-full flex items-center justify-center text-white"></div>
+                            <span class="hold-badge text-[9px] font-black text-amber-400 uppercase tracking-widest hidden absolute bottom-1 bg-slate-900/80 px-1 rounded">HOLD</span>
+                        </div>
+                        <div onclick="toggleHold(3)" id="dice-3" class="dice aspect-square bg-slate-700 hover:bg-slate-600 border-2 border-slate-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition select-none relative shadow-md">
+                            <div class="dice-face w-full h-full flex items-center justify-center text-white"></div>
+                            <span class="hold-badge text-[9px] font-black text-amber-400 uppercase tracking-widest hidden absolute bottom-1 bg-slate-900/80 px-1 rounded">HOLD</span>
+                        </div>
+                        <div onclick="toggleHold(4)" id="dice-4" class="dice aspect-square bg-slate-700 hover:bg-slate-600 border-2 border-slate-600 rounded-2xl flex flex-col items-center justify-center cursor-pointer transition select-none relative shadow-md">
+                            <div class="dice-face w-full h-full flex items-center justify-center text-white"></div>
+                            <span class="hold-badge text-[9px] font-black text-amber-400 uppercase tracking-widest hidden absolute bottom-1 bg-slate-900/80 px-1 rounded">HOLD</span>
+                        </div>
+                    </div>
+
+                    <button id="rollBtn" onclick="rollDice()" class="w-full max-w-sm bg-balut-600 hover:bg-balut-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-balut-600/30 transition flex items-center justify-center space-x-2 text-base">
+                        <i class="fa-solid fa-dice text-lg"></i>
+                        <span>Rolar Dados</span>
+                    </button>
+                    
+                    <p class="text-[11px] text-slate-400 mt-3 text-center">Toque nos dados para fixar (Hold) antes de rolar novamente.</p>
+                </div>
+            </div>
+
+            <!-- COLUNA CENTRO/DIREITA: Cartela Compacta 3x5 (Mobile Tab: 'score') -->
+            <div id="tabContentScore" class="lg:col-span-7 flex-col flex hidden lg:flex">
+                <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 sm:p-5 shadow-xl flex-1 flex flex-col">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-base font-bold text-white flex items-center space-x-2">
+                            <i class="fa-solid fa-table-cells text-balut-500"></i>
+                            <span>Cartela de Pontuação (Matriz 3x5)</span>
+                        </h3>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-xs text-slate-400 hidden sm:inline">Ver Jogador:</label>
+                            <select id="scoreViewer" onchange="switchViewedPlayer(this.value)" class="bg-slate-900 border border-slate-700 text-xs text-white rounded-lg px-2.5 py-1.5 focus:outline-none">
+                                <!-- Opções dos Jogadores -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Cartela Grade Compacta 3x5 -->
+                    <div id="compactScoreGrid" class="score-grid flex-1">
+                        <!-- Injetado via Javascript: 15 Células de categorias -->
+                    </div>
+
+                    <!-- Rodapé da Cartela / Total -->
+                    <div class="mt-4 pt-3 border-t border-slate-700/80 flex justify-between items-center bg-slate-900/60 p-3 rounded-xl border border-slate-700">
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-wider">Pontuação Total</span>
+                        <span id="scorecardTotalDisplay" class="text-xl font-black text-balut-400">0 Pts</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- COLUNA CLASSIFICAÇÃO: Destaque / Ranking (Mobile Tab: 'rank') -->
+            <div id="tabContentRank" class="lg:col-span-12 hidden lg:block mt-2">
+                <div class="bg-slate-800 border border-slate-700 rounded-2xl p-4 shadow-xl">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center space-x-2">
+                        <i class="fa-solid fa-trophy text-amber-400"></i>
+                        <span>Classificação ao Vivo</span>
+                    </h3>
+                    <div id="liveRankingGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <!-- Injetado dinamicamente com Cards Destacados -->
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- FIM DE JOGO MODAL -->
+    <div id="gameOverModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center">
+            <div class="w-16 h-16 bg-amber-400/20 text-amber-400 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl border border-amber-400/30">
+                <i class="fa-solid fa-trophy"></i>
+            </div>
+            <h2 class="text-2xl font-black text-white mb-1">Fim de Jogo!</h2>
+            <p id="winnerAnnouncement" class="text-balut-400 font-bold mb-6">---</p>
+            <div id="finalRankingList" class="space-y-2 mb-6 text-left max-h-60 overflow-y-auto"></div>
+            <button onclick="leaveRoom()" class="w-full bg-balut-600 hover:bg-balut-500 text-white font-bold py-3 rounded-xl shadow-lg transition">
+                Voltar ao Lobby
+            </button>
+        </div>
+    </div>
+
+    <!-- SCRIPT DE LÓGICA COMPLETO -->
+    <script>
+    'use strict';
+
+    // Lista ordenada de 15 Categorias dispostas em 3 Linhas x 5 Colunas
+    const categories = [
+        // Linha 1
+        { id: 'ases', name: 'Ases (1s)', line: 1, help: 'Soma dos dados com valor 1' },
+        { id: 'duis', name: 'Dois (2s)', line: 1, help: 'Soma dos dados com valor 2' },
+        { id: 'tres', name: 'Três (3s)', line: 1, help: 'Soma dos dados com valor 3' },
+        { id: 'quatros', name: 'Quatros (4s)', line: 1, help: 'Soma dos dados com valor 4' },
+        { id: 'cincos', name: 'Cincos (5s)', line: 1, help: 'Soma dos dados com valor 5' },
+        
+        // Linha 2
+        { id: 'senhas', name: 'Seis (6s)', line: 2, help: 'Soma dos dados com valor 6' },
+        { id: 'par1', name: '1 Par', line: 2, help: 'Soma do maior par' },
+        { id: 'par2', name: '2 Pares', line: 2, help: 'Soma dos dois pares' },
+        { id: 'trio', name: 'Trinca', line: 2, help: 'Soma de 3 dados iguais' },
+        { id: 'poker', name: 'Quadra', line: 2, help: 'Soma de 4 dados iguais' },
+
+        // Linha 3
+        { id: 'seq_min', name: 'Seq 1-5', line: 3, help: 'Sequência 1,2,3,4,5 (15 Pts)' },
+        { id: 'seq_maj', name: 'Seq 2-6', line: 3, help: 'Sequência 2,3,4,5,6 (20 Pts)' },
+        { id: 'full', name: 'Full House', line: 3, help: 'Trinca + Par (Soma total)' },
+        { id: 'soma', name: 'Soma Geral', line: 3, help: 'Soma de todos os 5 dados' },
+        { id: 'balut', name: 'BALUT', line: 3, help: '5 dados iguais (Dobro da soma)' }
+    ];
+
+    const playerColors = ['#22c55e', '#38bdf8', '#f472b6', '#fbbf24', '#c084fc', '#fb923c', '#22d3ee', '#a3e635'];
+
+    const $ = id => document.getElementById(id);
+    const uid = () => crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 10);
+    
+    let myPlayerId = localStorage.getItem('balut_id') || ('usr_' + uid());
+    localStorage.setItem('balut_id', myPlayerId);
+
+    let roomData = null;
+    let currentRoomId = null;
+    let localMode = false;
+    let viewedPlayerId = null;
+    let currentMobileTab = 'dice';
+
+    // Iniciar aplicativo
+    window.onload = () => {
+        const savedName = localStorage.getItem('balut_name');
+        if (savedName) $('playerNameInput').value = savedName;
+    };
+
+    function switchMobileTab(tab) {
+        currentMobileTab = tab;
+        ['dice', 'score', 'rank'].forEach(t => {
+            const btn = $('tabBtn' + t.charAt(0).toUpperCase() + t.slice(1));
+            const content = $('tabContent' + t.charAt(0).toUpperCase() + t.slice(1));
+            if (t === tab) {
+                btn?.classList.add('active');
+                content?.classList.remove('hidden');
+                content?.classList.add('flex');
+            } else {
+                btn?.classList.remove('active');
+                content?.classList.add('hidden');
+                content?.classList.remove('flex');
+            }
+        });
+    }
+
+    function toggleTheme() {
+        document.documentElement.classList.toggle('dark');
+    }
+
+    function roster() {
+        if (!roomData || !roomData.players) return [];
+        return Object.keys(roomData.players).map(id => ({ id, ...roomData.players[id] }));
+    }
+
+    function currentPlayer() {
+        const list = roster();
+        if (!list.length) return null;
+        return list[(roomData?.currentPlayerIndex || 0) % list.length];
+    }
+
+    function canAct() {
+        if (!roomData || roomData.status !== 'playing') return false;
+        const cp = currentPlayer();
+        return localMode || (cp && cp.id === myPlayerId);
+    }
+
+    // Criar e Entrar em Salas
+    async function createRoom() {
+        const name = $('playerNameInput').value.trim() || 'Jogador';
+        localStorage.setItem('balut_name', name);
+
+        const code = Math.random().toString(36).substring(2, 7).toUpperCase();
+        currentRoomId = code;
+        localMode = false;
+
+        const initialData = {
+            status: 'waiting',
+            mode: $('modeInput').value,
+            host: myPlayerId,
+            currentRound: 1,
+            currentPlayerIndex: 0,
+            rollsLeft: 3,
+            hasRolledThisTurn: false,
+            diceValues: [1, 1, 1, 1, 1],
+            heldDice: [false, false, false, false, false],
+            players: {
+                [myPlayerId]: { name, total: 0, scores: {}, ready: true, colorIndex: 0 }
+            }
+        };
+
+        if (window.FB) {
+            await window.FB.set(window.FB.ref(window.FB.db, 'rooms/' + code), initialData);
+            listenRoom(code);
+        } else {
+            roomData = initialData;
+            renderRoom();
+        }
+    }
+
+    async function joinRoom() {
+        const code = $('roomCodeInput').value.trim().toUpperCase();
+        if (!code) return;
+
+        const name = $('playerNameInput').value.trim() || 'Jogador';
+        localStorage.setItem('balut_name', name);
+
+        currentRoomId = code;
+        localMode = false;
+
+        if (window.FB) {
+            const snap = await window.FB.get(window.FB.ref(window.FB.db, 'rooms/' + code));
+            if (!snap.exists()) {
+                alert('Sala não encontrada!');
+                return;
+            }
+            const data = snap.val();
+            const pCount = Object.keys(data.players || {}).length;
+            data.players[myPlayerId] = { name, total: 0, scores: {}, ready: false, colorIndex: pCount % 8 };
+
+            await window.FB.update(window.FB.ref(window.FB.db, 'rooms/' + code + '/players'), data.players);
+            listenRoom(code);
+        }
+    }
+
+    function startLocalGame() {
+        localMode = true;
+        currentRoomId = 'LOCAL';
+        const name = $('playerNameInput').value.trim() || 'Jogador 1';
+
+        roomData = {
+            status: 'playing',
+            mode: $('modeInput').value,
+            host: myPlayerId,
+            currentRound: 1,
+            currentPlayerIndex: 0,
+            rollsLeft: 3,
+            hasRolledThisTurn: false,
+            diceValues: [1, 1, 1, 1, 1],
+            heldDice: [false, false, false, false, false],
+            players: {
+                [myPlayerId]: { name, total: 0, scores: {}, ready: true, colorIndex: 0 },
+                ['p2']: { name: 'Jogador 2', total: 0, scores: {}, ready: true, colorIndex: 1 }
+            }
+        };
+        renderRoom();
+    }
+
+    function listenRoom(code) {
+        window.FB.onValue(window.FB.ref(window.FB.db, 'rooms/' + code), snapshot => {
+            if (snapshot.exists()) {
+                roomData = snapshot.val();
+                renderRoom();
+            }
+        });
+    }
+
+    function toggleReady() {
+        if (!roomData || !roomData.players[myPlayerId]) return;
+        const current = roomData.players[myPlayerId].ready;
+        if (window.FB && currentRoomId !== 'LOCAL') {
+            window.FB.update(window.FB.ref(window.FB.db, `rooms/${currentRoomId}/players/${myPlayerId}`), { ready: !current });
+        }
+    }
+
+    function startOnlineGame() {
+        if (!roomData) return;
+        roomData.status = 'playing';
+        if (window.FB && currentRoomId !== 'LOCAL') {
+            window.FB.update(window.FB.ref(window.FB.db, `rooms/${currentRoomId}`), { status: 'playing' });
+        } else {
+            renderRoom();
+        }
+    }
+
+    // Ações do Jogo
+    function rollDice() {
+        if (!canAct() || roomData.rollsLeft <= 0) return;
+
+        const newDice = roomData.diceValues.map((val, i) => {
+            return roomData.heldDice[i] ? val : Math.floor(Math.random() * 6) + 1;
+        });
+
+        roomData.diceValues = newDice;
+        roomData.rollsLeft--;
+        roomData.hasRolledThisTurn = true;
+
+        syncState();
+
+        // Animação visual dos dados
+        for (let i = 0; i < 5; i++) {
+            if (!roomData.heldDice[i]) {
+                const el = $('dice-' + i);
+                el.classList.add('rolling');
+                setTimeout(() => el.classList.remove('rolling'), 800);
+            }
+        }
+    }
+
+    function toggleHold(index) {
+        if (!canAct() || !roomData.hasRolledThisTurn) return;
+        roomData.heldDice[index] = !roomData.heldDice[index];
+        syncState();
+    }
+
+    function selectCategory(catId) {
+        if (!canAct() || !roomData.hasRolledThisTurn) return;
+
+        const cp = currentPlayer();
+        if (cp.scores && cp.scores[catId] !== undefined) return;
+
+        const score = calculatePotentialScore(catId, roomData.diceValues);
+        if (!cp.scores) cp.scores = {};
+        cp.scores[catId] = score;
+
+        // Recalcular total
+        cp.total = Object.values(cp.scores).reduce((a, b) => a + b, 0);
+
+        // Avançar turno
+        const playersList = roster();
+        roomData.currentPlayerIndex = (roomData.currentPlayerIndex + 1) % playersList.length;
+
+        if (roomData.currentPlayerIndex === 0) {
+            roomData.currentRound++;
+        }
+
+        // Reset do turno
+        roomData.rollsLeft = 3;
+        roomData.hasRolledThisTurn = false;
+        roomData.heldDice = [false, false, false, false, false];
+
+        // Fim de jogo?
+        if (roomData.currentRound > 15) {
+            roomData.status = 'finished';
+        }
+
+        syncState();
+    }
+
+    function syncState() {
+        if (window.FB && currentRoomId !== 'LOCAL') {
+            window.FB.set(window.FB.ref(window.FB.db, 'rooms/' + currentRoomId), roomData);
+        } else {
+            renderRoom();
+        }
+    }
+
+    function leaveRoom() {
+        location.reload();
+    }
+
+    function copyInvite() {
+        navigator.clipboard?.writeText(currentRoomId);
+        alert('Código da sala copiado: ' + currentRoomId);
+    }
+
+    // Cálculo das Pontuações de Acordo com as Regras
+    function calculatePotentialScore(catId, dice) {
+        const counts = {};
+        dice.forEach(d => counts[d] = (counts[d] || 0) + 1);
+        const sum = dice.reduce((a, b) => a + b, 0);
+
+        switch (catId) {
+            case 'ases': return (counts[1] || 0) * 1;
+            case 'duis': return (counts[2] || 0) * 2;
+            case 'tres': return (counts[3] || 0) * 3;
+            case 'quatros': return (counts[4] || 0) * 4;
+            case 'cincos': return (counts[5] || 0) * 5;
+            case 'senhas': return (counts[6] || 0) * 6;
+            case 'par1': {
+                let maxPair = 0;
+                for (let n = 6; n >= 1; n--) if (counts[n] >= 2) { maxPair = n; break; }
+                return maxPair > 0 ? maxPair * 2 : 0;
+            }
+            case 'par2': {
+                let pairs = [];
+                for (let n = 6; n >= 1; n--) if (counts[n] >= 2) pairs.push(n);
+                if (pairs.length >= 2) return (pairs[0] * 2) + (pairs[1] * 2);
+                return 0;
+            }
+            case 'trio': {
+                let trio = 0;
+                for (let n = 6; n >= 1; n--) if (counts[n] >= 3) { trio = n; break; }
+                return trio > 0 ? trio * 3 : 0;
+            }
+            case 'poker': {
+                let poker = 0;
+                for (let n = 6; n >= 1; n--) if (counts[n] >= 4) { poker = n; break; }
+                return poker > 0 ? poker * 4 : 0;
+            }
+            case 'seq_min': {
+                const sorted = [...new Set(dice)].sort((a,b)=>a-b);
+                return (sorted.length === 5 && sorted[0] === 1 && sorted[4] === 5) ? 15 : 0;
+            }
+            case 'seq_maj': {
+                const sorted = [...new Set(dice)].sort((a,b)=>a-b);
+                return (sorted.length === 5 && sorted[0] === 2 && sorted[4] === 6) ? 20 : 0;
+            }
+            case 'full': {
+                const values = Object.values(counts);
+                return ((values.includes(3) && values.includes(2)) || values.includes(5)) ? sum : 0;
+            }
+            case 'soma': return sum;
+            case 'balut': return Object.values(counts).includes(5) ? sum * 2 : 0;
+            default: return 0;
+        }
+    }
+
+    function switchViewedPlayer(id) {
+        viewedPlayerId = id;
+        renderScorecardGrid();
+    }
+
+    // Renderização do Estado da Interface
+    function renderRoom() {
+        if (!roomData) return;
+
+        const isPlaying = roomData.status === 'playing' || roomData.status === 'finished';
+        $('setupScreen').classList.toggle('hidden', isPlaying);
+        $('gameScreen').classList.toggle('hidden', !isPlaying);
+
+        if (!isPlaying) {
+            renderLobby();
+            return;
+        }
+
+        const cp = currentPlayer();
+        const playersList = roster();
+
+        $('currentRoundDisplay').textContent = `${Math.min(roomData.currentRound, 15)} / 15`;
+        $('currentPlayerDisplay').textContent = cp ? cp.name : '---';
+        if (cp) $('currentPlayerDisplay').style.color = playerColors[cp.colorIndex || 0];
+
+        $('rollsLeftCount').textContent = roomData.rollsLeft;
+        $('turnStatusMsg').textContent = canAct() ? (roomData.hasRolledThisTurn ? 'Escolha ou Role' : 'Sua Vez!') : 'Aguardando Jogador';
+
+        $('rollBtn').disabled = !canAct() || roomData.rollsLeft <= 0;
+
+        // Atualizar Seletor de Visão da Cartela
+        const scoreSelect = $('scoreViewer');
+        scoreSelect.innerHTML = playersList.map(p => 
+            `<option value="${p.id}" ${p.id === (viewedPlayerId || cp?.id) ? 'selected' : ''}>${p.name}</option>`
+        ).join('');
+
+        renderDice();
+        renderScorecardGrid();
+        renderLiveRanking();
+
+        if (roomData.status === 'finished') {
+            renderGameOver();
+        }
+    }
+
+    function renderLobby() {
+        $('displayRoomCode').textContent = currentRoomId || '----';
+        const list = roster();
+        
+        $('lobbyPlayersList').innerHTML = list.map(p => `
+            <div class="flex justify-between items-center bg-slate-900/60 p-3 rounded-xl border border-slate-700">
+                <span class="font-bold" style="color: ${playerColors[p.colorIndex || 0]}">${p.name}</span>
+                <span class="text-xs px-2.5 py-1 rounded-full font-semibold ${p.ready ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-slate-700 text-slate-400'}">
+                    ${p.ready ? '✓ Pronto' : 'Aguardando'}
+                </span>
+            </div>
+        `).join('');
+
+        const isHost = roomData.host === myPlayerId;
+        const allReady = list.every(p => p.ready);
+        $('startOnlineGameBtn').classList.toggle('hidden', !isHost);
+        $('startOnlineGameBtn').disabled = !allReady;
+    }
+
+    function renderDice() {
+        for (let i = 0; i < 5; i++) {
+            const el = $('dice-' + i);
+            const val = roomData.hasRolledThisTurn ? roomData.diceValues[i] : '?';
+            const isHeld = roomData.heldDice[i];
+
+            el.querySelector('.dice-face').innerHTML = val === '?' ? '<span class="text-2xl font-bold text-slate-500">?</span>' : getDiceFaceHTML(val);
+            el.querySelector('.hold-badge').classList.toggle('hidden', !isHeld);
+            el.classList.toggle('border-amber-400', isHeld);
+            el.classList.toggle('bg-amber-500/10', isHeld);
+        }
+    }
+
+    // Cartela Compacta 3x5
+    function renderScorecardGrid() {
+        const cp = currentPlayer();
+        const targetPlayer = roster().find(p => p.id === (viewedPlayerId || cp?.id)) || cp;
+        if (!targetPlayer) return;
+
+        const isMyTurnToPick = canAct() && targetPlayer.id === cp.id && roomData.hasRolledThisTurn;
+        const grid = $('compactScoreGrid');
+
+        grid.innerHTML = categories.map(cat => {
+            const isMarked = targetPlayer.scores && targetPlayer.scores[cat.id] !== undefined;
+            const markedVal = isMarked ? targetPlayer.scores[cat.id] : null;
+            const potential = (!isMarked && isMyTurnToPick) ? calculatePotentialScore(cat.id, roomData.diceValues) : null;
+
+            let contentHTML = '';
+            let isPickable = false;
+
+            if (isMarked) {
+                contentHTML = `<span class="text-lg font-black text-white">${markedVal}</span>`;
+            } else if (potential !== null) {
+                isPickable = true;
+                contentHTML = `<span class="text-base font-black ${potential > 0 ? 'text-green-400' : 'text-slate-400'}">${potential} Pts</span>`;
+            } else {
+                contentHTML = `<span class="text-xs text-slate-600 font-bold">—</span>`;
+            }
+
+            return `
+                <div onclick="${isPickable ? `selectCategory('${cat.id}')` : ''}" 
+                     class="score-cell ${isPickable ? 'active-pick' : ''} ${isMarked ? 'bg-slate-900/80 border-slate-700/60' : ''}">
+                    <div class="flex justify-between items-center w-full">
+                        <span class="text-[11px] font-bold text-slate-300 truncate">${cat.name}</span>
+                        ${isMarked ? '<i class="fa-solid fa-check text-[10px] text-balut-500"></i>' : ''}
+                    </div>
+                    <div class="text-right mt-1">
+                        ${contentHTML}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        $('scorecardTotalDisplay').textContent = `${targetPlayer.total || 0} Pts`;
+    }
+
+    // Ranking Visual Destacado
+    function renderLiveRanking() {
+        const players = roster().sort((a, b) => (b.total || 0) - (a.total || 0));
+        const grid = $('liveRankingGrid');
+
+        grid.innerHTML = players.map((p, idx) => {
+            const color = playerColors[p.colorIndex || 0];
+            const isLeader = idx === 0 && (p.total || 0) > 0;
+
+            return `
+                <div class="bg-slate-900/80 border-2 rounded-xl p-3 flex items-center justify-between shadow-md relative overflow-hidden" style="border-color: ${color}">
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-black text-slate-400 w-4">${idx + 1}º</span>
+                        <div>
+                            <div class="text-xs font-bold text-white flex items-center">
+                                <span>${p.name}</span>
+                                ${isLeader ? '<i class="fa-solid fa-crown text-amber-400 text-[10px] ml-1"></i>' : ''}
+                            </div>
+                            <div class="text-[10px] text-slate-400">${p.scores ? Object.keys(p.scores).length : 0}/15 rodadas</div>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-base font-black text-balut-400">${p.total || 0}</span>
+                        <span class="text-[9px] text-slate-400 block">pts</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderGameOver() {
+        const players = roster().sort((a, b) => (b.total || 0) - (a.total || 0));
+        const winner = players[0];
+
+        $('winnerAnnouncement').textContent = `O vencedor é ${winner.name} com ${winner.total} Pontos!`;
+        $('finalRankingList').innerHTML = players.map((p, i) => `
+            <div class="flex justify-between items-center p-3 rounded-xl bg-slate-900 border border-slate-700">
+                <span class="font-bold text-sm text-white">${i + 1}º ${p.name}</span>
+                <span class="font-black text-balut-400">${p.total || 0} Pts</span>
+            </div>
+        `).join('');
+
+        $('gameOverModal').classList.remove('hidden');
+        $('gameOverModal').classList.add('flex');
+    }
+
+    function getDiceFaceHTML(val) {
+        const dotWhite = '<span class="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-white rounded-full shadow-inner"></span>';
+        const dotRed = '<span class="w-2 h-2 sm:w-2.5 sm:h-2.5 bg-red-500 rounded-full shadow-inner"></span>';
+        const d = (val === 1 || val === 4) ? dotRed : dotWhite;
+
+        switch (val) {
+            case 1: return `<div class="w-full h-full flex items-center justify-center">${d}</div>`;
+            case 2: return `<div class="w-full h-full flex justify-between p-2"><div class="flex flex-col justify-start">${d}</div><div class="flex flex-col justify-end">${d}</div></div>`;
+            case 3: return `<div class="w-full h-full flex justify-between p-2"><div class="flex flex-col justify-start">${d}</div><div class="flex flex-col justify-center items-center">${d}</div><div class="flex flex-col justify-end">${d}</div></div>`;
+            case 4: return `<div class="w-full h-full flex justify-between p-2"><div class="flex flex-col justify-between">${d}${d}</div><div class="flex flex-col justify-between">${d}${d}</div></div>`;
+            case 5: return `<div class="w-full h-full flex justify-between p-2"><div class="flex flex-col justify-between">${d}${d}</div><div class="flex flex-col justify-center items-center">${d}</div><div class="flex flex-col justify-between">${d}${d}</div></div>`;
+            case 6: return `<div class="w-full h-full flex justify-between p-2"><div class="flex flex-col justify-between">${d}${d}${d}</div><div class="flex flex-col justify-between">${d}${d}${d}</div></div>`;
+            default: return '';
+        }
+    }
+    </script>
+</body>
+</html>
